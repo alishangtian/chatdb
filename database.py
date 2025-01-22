@@ -141,11 +141,64 @@ class DatabaseManager:
             with self.mysql_conn.cursor() as cursor:
                 logger.info(f"Executing MySQL query: {query}")
                 cursor.execute(query)
+                
+                # Check query type and return appropriate JSON response
+                query_type = "SELECT"
+                table_name = None
+                
+                if query.strip().upper().startswith("CREATE TABLE"):
+                    query_type = "CREATE"
+                    # Extract table name more reliably
+                    table_name = query.split()[2].strip('`').split('(')[0]
+                    logger.info(f"Creating new table: {table_name}")
+                    return {
+                        "status": "success",
+                        "operation": "create_table",
+                        "table_name": table_name,
+                        "message": f"Table {table_name} created successfully"
+                    }
+                elif query.strip().upper().startswith("LOAD DATA"):
+                    query_type = "LOAD"
+                    # Extract table name from LOAD DATA INFILE query
+                    table_name = query.split("INTO TABLE")[1].split()[0].strip('`')
+                    logger.info(f"Loading data into table: {table_name}")
+                    return {
+                        "status": "success",
+                        "operation": "load_data",
+                        "table_name": table_name,
+                        "message": f"Data loaded successfully into {table_name}"
+                    }
+                elif "-- 无需创建新表" in query:
+                    # Extract table name more reliably
+                    table_name = None
+                    if "`" in query:
+                        table_name = query.split("`")[1]
+                    elif "INTO" in query.upper():
+                        table_name = query.upper().split("INTO")[1].split()[0].strip('`')
+                    logger.info(f"Using existing table: {table_name}")
+                    return {
+                        "status": "success",
+                        "operation": "no_create",
+                        "table_name": table_name,
+                        "message": f"Using existing table {table_name}"
+                    }
+                
+                # For SELECT queries
                 columns = [desc[0] for desc in cursor.description]
                 data = cursor.fetchall()
-                return self._format_query_results(columns, data)
+                return {
+                    "status": "success",
+                    "operation": "select",
+                    "columns": columns,
+                    "data": data,
+                    "row_count": len(data)
+                }
         except Exception as e:
-            raise e("Error executing MySQL query: " + str(e))
+            return {
+                "status": "error",
+                "operation": query_type,
+                "message": str(e)
+            }
 
     def execute_mongodb_query(self, query_str):
         """Execute a MongoDB query string and return formatted results"""
@@ -167,7 +220,7 @@ class DatabaseManager:
                 return self._format_query_results(columns, rows)
             return str(result)
         except Exception as e:
-            raise e("Error executing MongoDB query: " + str(e))
+            raise Exception("Error executing MongoDB query: " + str(e))
             
     def close_connections(self):
         if self.mysql_conn:
@@ -176,3 +229,90 @@ class DatabaseManager:
         if self.mongo_client:
             self.mongo_client.close()
             logger.info("Closed MongoDB connection")
+
+    def insert_from_df(self, table_name, df):
+        """Insert data from DataFrame into MySQL table"""
+        try:
+            if not self.mysql_conn or not self.mysql_conn.open:
+                self.connect_mysql()
+                
+            # Clean data - replace NaN with None (NULL in MySQL)
+            df = df.where(pd.notnull(df), None)
+            logger.info(f"Cleaned data for table {table_name}: {df.head().to_dict()}")
+                
+            # Create SQL placeholders
+            columns = df.columns.tolist()
+            placeholders = ', '.join(['%s'] * len(columns))
+            sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+            
+            # Convert DataFrame to list of tuples
+            data = [tuple(row) for row in df.values]
+            
+            # Execute batch insert
+            with self.mysql_conn.cursor() as cursor:
+                cursor.executemany(sql, data)
+                self.mysql_conn.commit()
+                logger.info(f"Inserted {len(data)} rows into {table_name}")
+                return {
+                    "status": "success",
+                    "operation": "insert",
+                    "table_name": table_name,
+                    "row_count": len(data),
+                    "message": f"Successfully inserted {len(data)} rows into {table_name}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error inserting data into {table_name}: {e}")
+            return {
+                "status": "error",
+                "operation": "insert",
+                "table_name": table_name,
+                "message": str(e)
+            }
+
+    def process_csv(self, file_path, collection_name=None):
+        """Process CSV file and insert data into MongoDB"""
+        try:
+            if not self.mongo_client:
+                self.connect_mongodb()
+            
+            db = self.mongo_client[MONGODB_DATABASE]
+            
+            # Read CSV file
+            df = pd.read_csv(file_path)
+            headers = df.columns.tolist()
+            
+            # Determine collection name
+            if not collection_name:
+                collection_name = os.path.splitext(os.path.basename(file_path))[0]
+            
+            collection = db[collection_name]
+            
+            # Check if collection exists
+            if collection_name in db.list_collection_names():
+                # Get existing fields
+                sample_doc = collection.find_one()
+                existing_fields = set(sample_doc.keys()) if sample_doc else set()
+                
+                # Check field compatibility
+                new_fields = set(headers)
+                if not new_fields.issubset(existing_fields):
+                    logger.warning(f"New fields detected: {new_fields - existing_fields}")
+                    # Update schema to include new fields
+                    collection.update_many(
+                        {},
+                        {"$set": {field: None for field in new_fields - existing_fields}}
+                    )
+            
+            # Convert DataFrame to list of dicts
+            data = df.to_dict('records')
+            
+            # Insert data
+            result = collection.insert_many(data)
+            logger.info(f"Inserted {len(result.inserted_ids)} documents into {collection_name}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error processing CSV file: {e}")
+            return False

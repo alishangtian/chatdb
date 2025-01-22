@@ -15,7 +15,7 @@ class Logger:
     def _initialize_logger(self):
         """Initialize the logger with custom configuration"""
         # Create logs directory if it doesn't exist
-        log_dir = "logs"
+        log_dir = "/app/logs"
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
             
