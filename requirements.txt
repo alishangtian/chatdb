@@ -1,6 +1,5 @@
 # Database
 pymysql
-pymongo
 
 # LLM and Language Processing
 langchain

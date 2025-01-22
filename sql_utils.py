@@ -30,45 +30,18 @@ def extract_sql(text: str) -> str:
     
     return text.strip()
 
-def create_table_from_df(table_name: str, columns: List[str], dtypes: List[str]) -> str:
+def create_table_from_sql(sql: str) -> bool:
     """
-    根据DataFrame的列信息创建MySQL表
+    根据模型返回的SQL语句创建MySQL表
     
     Args:
-        table_name: 表名
-        columns: 列名列表
-        dtypes: 列类型列表
+        sql: 模型返回的创建表SQL语句
         
     Returns:
-        str: 创建成功的表名，失败返回None
+        bool: 是否创建成功
     """
     db_manager = DatabaseManager()
-    
-    # 映射pandas dtype到MySQL类型
-    type_mapping = {
-        'int64': 'INT',
-        'float64': 'FLOAT',
-        'object': 'VARCHAR(255)',
-        'bool': 'BOOLEAN',
-        'datetime64[ns]': 'DATETIME'
-    }
-    
-    # 生成列定义
-    column_defs = []
-    for col, dtype in zip(columns, dtypes):
-        mysql_type = type_mapping.get(dtype, 'VARCHAR(255)')
-        column_defs.append(f"`{col}` {mysql_type}")
-    
-    # 生成创建表SQL
-    create_sql = f"""
-    CREATE TABLE IF NOT EXISTS `{table_name}` (
-        {', '.join(column_defs)}
-    );
-    """
-    
-    if db_manager.execute_mysql_query(create_sql):
-        return table_name
-    return None
+    return db_manager.execute_mysql_query(sql)
 
 def add_columns_to_table(table_name: str, columns: List[str], dtypes: List[str]) -> bool:
     """

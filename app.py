@@ -111,10 +111,7 @@ db_manager = DatabaseManager()
 
 def get_schema(db_type):
     """Get database schema based on type"""
-    if db_type.lower() == "mysql":
-        return db_manager.get_mysql_schema()
-    else:
-        return db_manager.get_mongodb_schema()
+    return db_manager.get_mysql_schema()
 
 def table_creation_prompt(query):
     """处理表创建提示，返回固定格式的JSON响应"""
@@ -203,9 +200,7 @@ def process_query(question, db_type):
             try:
                 # Execute query
                 logger.info(f"Executing query (attempt {retry_count + 1})")
-                data_str = (db_manager.execute_mysql_query(sql_response) 
-                      if db_type.lower() == "mysql" 
-                      else db_manager.execute_mongodb_query(sql_response))
+                data_str = db_manager.execute_mysql_query(sql_response)
                 logger.info(f"Query executed successfully result: {data_str}")
                 answer = ""
                 # Validate input data before streaming
@@ -267,22 +262,38 @@ def process_query(question, db_type):
 table_creation_prompt_template = PromptTemplate(
     input_variables=["schema", "csv_columns", "csv_sample"],
     template="""
-    你是一个数据库专家。请根据以下信息判断是否需要创建新表，并生成相应的SQL语句。
+    你是一个mysql数据库专家。请根据以下信息判断是否需要创建新表，并生成相应的SQL语句。
     
     现有数据库表结构：
     {schema}
     
-    CSV文件列名：
+    待插入CSV数据的列名：
     {csv_columns}
     
-    CSV文件前两行数据：
+    待插入CSV数据的前两行数据：
     {csv_sample}
     
-    请严格按以下格式返回结果：
+    请严格按以下要求和格式返回结果：
+    1. 字段类型推断规则：
+       - 如果值只包含数字：INT
+       - 如果值包含数字和小数点：DECIMAL(10,2)
+       - 如果值包含日期格式：DATE
+       - 如果值长度超过255：TEXT
+       - 其他情况：VARCHAR(255)
+    2. 主键规则：
+       - 如果列名包含"id"或"ID"：设为主键
+       - 如果没有id列：使用第一个列作为主键
+    3. 唯一性约束：
+       - 如果列名包含"email"或"username"：添加UNIQUE约束
+    4. 表名生成规则：
+       - 使用CSV文件名（去掉扩展名）作为表名
+       - 如果表已存在且结构匹配：使用现有表
+       - 如果表已存在但结构不匹配：创建新表并添加"_new"后缀
+    5. 返回格式：
     -- 如果需要创建新表，返回如下
     ```sql
     CREATE TABLE IF NOT EXISTS `table_name` (
-        column_name data_type,
+        column_name data_type [PRIMARY KEY] [UNIQUE],
         ...
     );
     ```
@@ -300,7 +311,7 @@ def process_upload(file):
             return "请选择要上传的文件"
             
         import pandas as pd
-        from sql_utils import create_table_from_df, extract_sql
+        from sql_utils import create_table_from_sql, extract_sql
         import os
         
         # Read CSV file
@@ -359,11 +370,10 @@ def process_upload(file):
             
             # Create table and get result
             logger.info(f"开始创建表：{table_name}")
-            created_table = create_table_from_df(table_name, columns, dtypes)
+            created_table = create_table_from_sql(sql)
             if not created_table:
                 logger.error("创建表失败")
                 return "创建表失败"
-            table_name = created_table
             logger.info(f"表创建成功：{table_name}")
         else:
             # Extract table name from existing schema
@@ -377,11 +387,11 @@ def process_upload(file):
                 
         logger.info(f"最终使用表：{table_name}")
         
-        # Insert data
+        # Insert data using insert_from_df which explicitly handles DataFrames
         logger.info(f"开始插入数据到表{table_name}")
-        success = db_manager.insert_from_df(table_name, df)
+        result = db_manager.insert_from_df(table_name, df)
         
-        if success:
+        if result and result.get("status") == "success":
             logger.info(f"数据插入成功，共插入{len(df)}行")
             return f"文件上传成功，数据已插入表{table_name}"
         else:
@@ -423,7 +433,7 @@ with gr.Blocks() as app:
             )
             
             db_type = gr.Radio(
-                choices=["MySQL", "MongoDB"],
+                choices=["MySQL"],
                 label="选择数据库类型",
                 value="MySQL"
             )
