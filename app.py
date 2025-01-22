@@ -263,33 +263,7 @@ table_creation_prompt_template = PromptTemplate(
     input_variables=["schema", "csv_columns", "csv_sample"],
     template="""
     你是一个mysql数据库专家。请根据以下信息判断是否需要创建新表，并生成相应的SQL语句。
-    
-    现有数据库表结构：
-    {schema}
-    
-    待插入CSV数据的列名：
-    {csv_columns}
-    
-    待插入CSV数据的前两行数据：
-    {csv_sample}
-    
-    请严格按以下要求和格式返回结果：
-    1. 字段类型推断规则：
-       - 如果值只包含数字：INT
-       - 如果值包含数字和小数点：DECIMAL(10,2)
-       - 如果值包含日期格式：DATE
-       - 如果值长度超过255：TEXT
-       - 其他情况：VARCHAR(255)
-    2. 主键规则：
-       - 如果列名包含"id"或"ID"：设为主键
-       - 如果没有id列：使用第一个列作为主键
-    3. 唯一性约束：
-       - 如果列名包含"email"或"username"：添加UNIQUE约束
-    4. 表名生成规则：
-       - 使用CSV文件名（去掉扩展名）作为表名
-       - 如果表已存在且结构匹配：使用现有表
-       - 如果表已存在但结构不匹配：创建新表并添加"_new"后缀
-    5. 返回格式：
+    切记：
     -- 如果需要创建新表，返回如下
     ```sql
     CREATE TABLE IF NOT EXISTS `table_name` (
@@ -300,7 +274,23 @@ table_creation_prompt_template = PromptTemplate(
     -- 如果不需要创建新表，返回如下
     ```sql
     无需创建新表，使用表`table_name`
-    ```
+    ```  
+    
+    现有数据库表结构：
+    {schema}
+    
+    待插入CSV数据的列名：
+    {csv_columns}
+    
+    待插入CSV数据的前两行数据：
+    {csv_sample}
+
+    建表语句字段推断规则：
+       - 如果值只包含数字：INT
+       - 如果值包含数字和小数点：DECIMAL(10,2)
+       - 如果值包含日期格式：DATE
+       - 如果值长度超过255：TEXT
+       - 其他情况：VARCHAR(255)
     """
 )
 
@@ -344,16 +334,18 @@ def process_upload(file):
         schema = db_manager.get_mysql_schema()
         
         # Get CSV sample data
-        csv_sample = df.head(2).to_string(index=False)
+        csv_sample = df.head(2).values.tolist()
         logger.info(f"获取CSV样本数据：\n{csv_sample}")
         
         # Ask model to determine table creation
         logger.info("开始生成表创建SQL")
-        response = format_llm_response(llm.invoke(table_creation_prompt_template.format(
+        formated_prompt = table_creation_prompt_template.format(
             schema=schema,
             csv_columns=columns,
             csv_sample=csv_sample
-        )))
+        )
+        logger.info(f"生成表创建SQL提示：\n {formated_prompt}")
+        response = format_llm_response(llm.invoke(formated_prompt))
         logger.info(f"模型返回结果：\n {response}")
         
         # Extract SQL from response
