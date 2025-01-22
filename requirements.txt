@@ -1,0 +1,17 @@
+# Database
+pymysql
+pymongo
+
+# LLM and Language Processing
+langchain
+langchain-ollama
+
+# Web Interface
+gradio
+
+# Data Processing
+pandas
+
+# Environment Configuration
+python-dotenv
+cryptography

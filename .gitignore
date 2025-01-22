@@ -1,0 +1,6 @@
+/.gradio
+/__pycache__
+/logs
+/mongodb_data
+/mysql_data
+.env
