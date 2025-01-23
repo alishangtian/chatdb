@@ -262,11 +262,13 @@ def process_query(question, db_type):
 table_creation_prompt_template = PromptTemplate(
     input_variables=["schema", "csv_columns", "csv_sample"],
     template="""
-    你是一个mysql数据库专家。请根据以下信息判断是否需要创建新表，并生成相应的SQL语句。
+    你是一个mysql数据库专家。请根据已存在的表信息判断是否需要创建新表，并生成相应的SQL语句。
     切记：
-    -- 如果需要创建新表，返回如下
+    -- 当待插入CSV数据的列名和已存在表的字段列名称不一致时，需要创建新表，并返回建表sql，
+    -- 切记：字段Pack_Years和Pack Years需要认为是相同的字段，忽略大小写、空格和驼峰格式的差异。
+    返回如下
     ```sql
-    CREATE TABLE IF NOT EXISTS `table_name` (
+    CREATE TABLE `table_name` (
         column_name data_type [PRIMARY KEY] [UNIQUE],
         ...
     );
@@ -294,18 +296,23 @@ table_creation_prompt_template = PromptTemplate(
     """
 )
 
-def process_upload(file):
+def process_upload(file, table_name=None):
     """Process uploaded CSV file"""
     try:
         if not file:
             return "请选择要上传的文件"
             
         import pandas as pd
-        from sql_utils import create_table_from_sql, extract_sql
+        from sql_utils import create_table_from_sql, extract_sql, extract_table_name
         import os
         
         # Read CSV file
         logger.info("开始读取CSV文件")
+        
+        # If no table name provided, generate from filename
+        if not table_name:
+            table_name = os.path.splitext(os.path.basename(file.name))[0]
+            logger.info(f"从文件名生成初始表名：{table_name}")
         import io
         if hasattr(file, 'read'):  # Handle file-like object
             content = file.read()
@@ -354,12 +361,10 @@ def process_upload(file):
         
         # Execute table creation if needed
         if "CREATE TABLE" in sql:
-            # Extract table name from CREATE TABLE statement
-            table_name_match = re.search(r"CREATE TABLE IF NOT EXISTS `([^`]+)`", sql)
-            if table_name_match:
-                table_name = table_name_match.group(1)
-                logger.info(f"从CREATE TABLE语句提取表名：{table_name}")
-            
+            table_name = extract_table_name(sql)
+            if not table_name:
+                logger.error("无法确定表名")
+                return f"无法确定表名 sql: {sql}"
             # Create table and get result
             logger.info(f"开始创建表：{table_name}")
             created_table = create_table_from_sql(sql)
@@ -405,15 +410,22 @@ with gr.Blocks() as app:
                     label="上传CSV文件",
                     file_types=[".csv"]
                 )
+                # 添加表名下拉选择
+                table_name_dropdown = gr.Dropdown(
+                    label="选择表名",
+                    choices=db_manager.get_table_names(),
+                    interactive=True,
+                    allow_custom_value=True
+                )
                 upload_btn = gr.Button("上传")
             with gr.Column():
                 upload_output = gr.Textbox(
-                    label="上传结果",
+                    label="上传结果", 
                     lines=2
                 )
         upload_btn.click(
             fn=process_upload,
-            inputs=file_input,
+            inputs=[file_input, table_name_dropdown],
             outputs=upload_output
         )
     
@@ -457,7 +469,7 @@ with gr.Blocks() as app:
 if __name__ == "__main__":
     logger.info("Starting NLP2SQL application")
     try:
-        app.launch(server_name="0.0.0.0", server_port=7860, share=True)
+        app.launch(server_name="0.0.0.0", server_port=8860, share=True)
     except Exception as e:
         logger.info(f"Application error: {str(e)}", exc_info=True)
     finally:

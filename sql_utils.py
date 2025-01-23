@@ -40,8 +40,31 @@ def create_table_from_sql(sql: str) -> bool:
     Returns:
         bool: 是否创建成功
     """
+    # 提取表名用于日志记录
+    table_name = extract_table_name(sql)
+    if table_name:
+        print(f"Creating table: {table_name}")
+    
     db_manager = DatabaseManager()
     return db_manager.execute_mysql_query(sql)
+
+def extract_table_name(sql: str) -> str:
+    """
+    从CREATE TABLE语句中提取表名
+    
+    Args:
+        sql: CREATE TABLE SQL语句
+        
+    Returns:
+        str: 提取出的表名
+    """
+    # 匹配带引号和不带引号的表名
+    pattern = r"(?i)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:'([^']+)'|([^\s\(]+))"
+    match = re.search(pattern, sql)
+    if match:
+        # 返回带引号或不带引号的表名
+        return match.group(1) or match.group(2)
+    return None
 
 def add_columns_to_table(table_name: str, columns: List[str], dtypes: List[str]) -> bool:
     """

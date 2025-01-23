@@ -18,6 +18,20 @@ class DatabaseManager:
             logger.error(f"MySQL connection error: {e}")
             return False
             
+    def get_table_names(self):
+        """获取数据库中所有表名"""
+        try:
+            if not self.mysql_conn or not self.mysql_conn.open:
+                self.connect_mysql()
+                
+            with self.mysql_conn.cursor() as cursor:
+                cursor.execute("SHOW TABLES")
+                tables = cursor.fetchall()
+                return [table[0] for table in tables]
+        except Exception as e:
+            logger.error(f"Error getting table names: {e}")
+            return []
+
     def get_mysql_schema(self):
         """Get MySQL database schema information"""
         try:
